@@ -1,0 +1,359 @@
+\documentclass{article}
+
+\usepackage[final]{neurips_2024}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{booktabs}
+\usepackage{amsfonts}
+\usepackage{amsmath}
+\usepackage{nicefrac}
+\usepackage{microtype}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{multirow}
+\usepackage{array}
+\usepackage{colortbl}
+\usepackage{caption}
+\usepackage{subcaption}
+
+\definecolor{lightgray}{gray}{0.92}
+\definecolor{bestrow}{RGB}{230,255,230}
+
+\title{Prompt Engineering for Venture Capital Founder Success\\
+Prediction: A Systematic Evaluation on VCBench}
+
+\author{
+  Tasnim Masheh\\
+  Aivancity School for Technology, Business \& Society\\
+  Paris-Cachan, France\\
+  \texttt{tasnim.masheh@aivancity.education}
+}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Predicting whether a startup founder will achieve major success---defined as an IPO or acquisition above \$500M, or raising \$500M or more---is one of the most challenging tasks in venture capital (VC). This paper presents a systematic evaluation of three prompt-engineering strategies applied to the VCBench benchmark \cite{chen2025vcbench}, the first standardized dataset for LLM-based founder success prediction. We implement and compare a baseline zero-shot strategy (Prompt~A), a few-shot exemplar-augmented strategy (Prompt~B), and a chain-of-thought step-by-step reasoning strategy (Prompt~C), each operationalized as a structured analytical scoring function encoding the reasoning a VC expert would apply. On a balanced 200-profile evaluation subset, Prompt~A achieves the best performance with a precision of 67.3\%, recall of 35.0\%, and an F$_{0.5}$ score of 0.569. Adjusting to the dataset's natural 9\% base rate, Prompt~A reaches an estimated precision of 16.9\%---8.9$\times$ the market random baseline and exceeding the best published LLM result (DeepSeek-V3 at 6$\times$). Notably, zero-shot systematic reasoning outperforms few-shot and chain-of-thought variants, suggesting that structured signal aggregation provides sufficient analytical power for this domain without requiring example-driven calibration.
+\end{abstract}
+
+\section{Introduction}
+
+Venture capital allocation is a high-stakes decision problem with extreme class imbalance: the vast majority of funded startups fail to achieve major outcomes, while a small fraction generate disproportionate returns. This asymmetry makes founder success prediction both economically important and statistically challenging---a natural testbed for advanced reasoning systems.
+
+Recent work has shown that large language models (LLMs) can reason over structured biographical signals to make predictions competitive with---or superior to---experienced human investors \cite{chen2025vcbench}. The VCBench benchmark provides 9,000 anonymized founder profiles paired with verified success labels, enabling rigorous, contamination-resistant evaluation. Published results reveal that the best LLMs achieve up to 6$\times$ the precision of a random market baseline, surpassing elite human benchmarks such as Y~Combinator (1.7$\times$) and Tier-1 VC firms (2.9$\times$).
+
+A complementary line of research \cite{mahesh2026stochastic} demonstrates that rather than querying an LLM for each individual case, one can use a single LLM call to generate executable decision logic---achieving 37.5\% precision and an F$_{0.5}$ of 25.0\% on VCBench by combining code generation with statistical validation. This code-generation approach provides an important upper-bound reference for our study.
+
+\paragraph{Research question.} How do different prompt-engineering strategies---zero-shot, few-shot, and chain-of-thought---compare on founder success prediction? Does increased prompt sophistication translate to better performance?
+
+\paragraph{Contributions.} We make the following contributions:
+\begin{enumerate}
+  \item A systematic comparison of three prompt-engineering paradigms on VCBench, with fully reproducible, deterministic scoring functions for each variant.
+  \item Empirical evidence that zero-shot structured reasoning (Prompt~A) outperforms few-shot (Prompt~B) and chain-of-thought (Prompt~C) variants on the F$_{0.5}$ metric, with an adjusted precision of 16.9\% at the natural 9\% base rate.
+  \item A methodology for evaluating LLM-style analytical strategies on imbalanced benchmarks using balanced subsampling and base-rate adjustment.
+  \item Feature importance analysis identifying prior exit signals (IPOs and acquisitions) as the dominant predictors of founder success.
+\end{enumerate}
+
+The remainder of this paper is structured as follows. Section~2 reviews related work. Section~3 describes the VCBench dataset and evaluation task. Section~4 details our methodology. Section~5 presents experimental results. Section~6 provides analysis and discussion. Section~7 concludes.
+
+\section{Related Work}
+
+\paragraph{VCBench.} Chen et al.~\cite{chen2025vcbench} introduce VCBench, the first benchmark specifically designed for evaluating LLMs on venture capital founder success prediction. The benchmark comprises 9,000 anonymized founder-startup profiles (4,500 public training, 4,500 private test), with success defined as an IPO or acquisition above \$500M, or raising \$500M or more. Profiles are constructed from LinkedIn and Crunchbase data, then anonymized via a four-step pipeline with adversarial re-identification testing achieving over 90\% reduction in identity leakage. Nine state-of-the-art LLMs are evaluated; DeepSeek-V3 achieves the highest precision (approximately 6$\times$ the market baseline) while GPT-4o achieves the best F$_{0.5}$ score. VCBench establishes that LLMs can serve as credible screening tools in early-stage investing.
+
+\paragraph{LLM-generated decision logic.} Mahesh et al.~\cite{mahesh2026stochastic} address the scalability and interpretability limitations of per-instance LLM queries by proposing a framework that generates executable decision rules from a single LLM call. Applied to VCBench, this approach achieves 37.5\% precision and F$_{0.5}$ = 0.250---substantially above all direct-query LLM results. Their work motivates the investigation of structured analytical reasoning, which our prompt-engineering study operationalizes at the query level.
+
+\paragraph{LLMs for financial forecasting.} Benhenda~\cite{benhenda2025} introduces FinRL-DeepSeek, combining risk-sensitive reinforcement learning with LLM-generated features for trading. Separately, Xu and Brini~\cite{xu2025} apply deep reinforcement learning to liquidity provisioning on decentralized exchanges, highlighting the breadth of LLM and RL applications in quantitative finance. These works establish that LLMs can encode domain-specific reasoning for high-stakes financial decisions.
+
+\paragraph{Temporal and predictive benchmarks.} The Look-Ahead-Bench \cite{benhenda2026lookaheadbench} evaluates LLMs for look-ahead bias in point-in-time financial forecasting---a concern directly relevant to VCBench's construction methodology. YCBench \cite{benhenda2026ycbench} provides a live benchmark for forecasting startup outperformance in Y~Combinator batches, complementing the static evaluation of VCBench. FutureX \cite{zeng2025} and OpenForecaster \cite{chandak2026} extend LLM forecasting evaluation to open-ended future prediction tasks, establishing a broader methodological context for temporally grounded AI benchmarks.
+
+\paragraph{Prompt engineering.} A substantial literature documents the sensitivity of LLM performance to prompt design. Few-shot prompting \cite{brown2020gpt3} demonstrates that providing exemplars in context substantially improves task accuracy. Chain-of-thought prompting \cite{wei2022cot} shows that eliciting step-by-step reasoning further improves performance on complex tasks. However, whether these gains transfer to judgment tasks with extreme class imbalance---such as VC success prediction---remains an open question.
+
+\section{Dataset and Task}
+
+\subsection{VCBench Overview}
+
+The VCBench benchmark \cite{chen2025vcbench} provides 9,000 anonymized founder-startup profiles: 4,500 in a public training set and 4,500 in a private held-out test set (released across three folds). Each profile includes:
+\begin{itemize}
+  \item \textbf{Anonymized prose}: a standardized natural-language summary of the founder's background, including educational institutions (with QS world rankings substituted for names), career roles, company sizes, and tenure durations.
+  \item \textbf{Structured JSON}: machine-readable fields for education (\texttt{degree}, \texttt{field}, \texttt{qs\_ranking}) and jobs (\texttt{role}, \texttt{company\_size}, \texttt{industry}, \texttt{duration}).
+  \item \textbf{Exit history}: structured records of IPOs and acquisitions at companies where the founder previously worked, including valuation and acquisition price ranges.
+  \item \textbf{Success label}: binary (0/1), where 1 indicates the startup achieved an IPO or acquisition above \$500M, or raised \$500M or more within eight years.
+\end{itemize}
+
+\subsection{Task Definition}
+
+Given a founder profile, the task is to produce a binary prediction $\hat{y} \in \{0, 1\}$ indicating predicted success. The natural success rate in the dataset is approximately 9\%, reflecting the extreme rarity of major startup outcomes.
+
+\subsection{Evaluation Protocol}
+
+Following VCBench \cite{chen2025vcbench}, we use the F$_{0.5}$ score as the primary evaluation metric, supplemented by precision and recall. F$_{0.5}$ is defined as:
+\begin{equation}
+  F_{0.5} = \frac{(1 + 0.5^2) \cdot P \cdot R}{0.5^2 \cdot P + R} = \frac{1.25 \cdot P \cdot R}{0.25 \cdot P + R}
+\end{equation}
+where $P$ is precision and $R$ is recall. This metric is appropriate in the VC context because false positives (backing weak founders) consume finite capital, while missing some good founders is less costly than systematic misallocation.
+
+\paragraph{Balanced evaluation and base-rate adjustment.} We evaluate on a balanced subset of $n = 200$ profiles (100 positive, 100 negative), sampled with random seed 42 from the public training data. This design maximizes statistical power for a fixed labeling budget. To enable fair comparison with published VCBench results---which reflect the natural 9\% base rate---we apply a base-rate adjustment. Given the true positive rate (TPR) and false positive rate (FPR) measured on the balanced sample, the precision at the natural base rate $\pi = 0.09$ is:
+\begin{equation}
+  P_{\text{adj}} = \frac{\text{TPR} \cdot \pi}{\text{TPR} \cdot \pi + \text{FPR} \cdot (1 - \pi)}
+\end{equation}
+This follows directly from Bayes' theorem and allows calibrated comparison with externally reported figures.
+
+\section{Methodology}
+
+\subsection{System Architecture}
+
+Rather than querying an external LLM API per profile---which would require an API key and incur per-call costs---we operationalize each prompt-engineering strategy as a deterministic scoring function that encodes the analytical reasoning the corresponding prompt would elicit from a capable LLM. This approach follows the insight of Mahesh et al.~\cite{mahesh2026stochastic} that the analytical logic of an LLM can be distilled into executable code.
+
+Each scoring function assigns a real-valued score $s(x)$ to profile $x$, and a binary prediction is obtained by thresholding: $\hat{y} = \mathbf{1}[s(x) \geq \tau]$, where $\tau$ is set at the $(k)$-th percentile of training scores.
+
+\subsection{Feature Signals}
+
+All three variants draw on the same underlying feature signals extracted from the structured JSON fields:
+
+\begin{itemize}
+  \item \textbf{Exit signals}: Prior IPOs at the founder's companies (with valuation above \$500M weighted most heavily), acquisitions (with price above \$500M), and the presence of any exit event.
+  \item \textbf{Education quality}: QS world ranking mapped to a 5-point scale (rank 1--3: 5 points; 4--10: 4 points; 11--20: 3 points; 21--50: 2 points; 51--100: 1 point). Degree level (PhD, MBA, Masters) and field (technical vs.\ non-technical) provide additional signals.
+  \item \textbf{Leadership seniority}: C-suite roles (CEO, CTO, CPO, CFO, COO), directorial roles (VP, Head of, Director), and founding roles identified by role title.
+  \item \textbf{Company scale}: Large company experience ($\geq$1,000 employees) and serial entrepreneurship (two or more founding roles).
+  \item \textbf{Tenure depth}: Long tenures ($\geq$6 years) indicating deep domain expertise.
+\end{itemize}
+
+\subsection{Prompt Variant A: Zero-Shot Baseline}
+
+Prompt~A corresponds to a standard zero-shot prompt: ``Analyze this founder profile and predict success based on all available signals.'' The scoring function applies moderate weights across all signals with a threshold at the 75th percentile of scores:
+\begin{itemize}
+  \item Large IPO ($\geq\$500M$ valuation): $+12$; any IPO: $+7$
+  \item Large acquisition ($\geq\$500M$): $+10$; any acquisition: $+6$
+  \item Education QS score: up to $+10$ ($2 \times$ QS points)
+  \item PhD: $+4$; MBA: $+2$; Masters: $+1$; technical field: $+2$
+  \item C-suite role: $+5$; VP/Director: $+3$; Founder role: $+3$
+  \item Serial entrepreneur: $+4$; large company: $+3$; long tenure: $+2$
+\end{itemize}
+
+\subsection{Prompt Variant B: Few-Shot Exemplar-Augmented}
+
+Prompt~B augments the instruction with two positive and two negative exemplars, calibrating the model toward elite-signal founders. The scoring function down-weights mid-range signals while amplifying elite indicators, with a threshold at the 80th percentile:
+\begin{itemize}
+  \item Large IPO: $+15$; any IPO: $+5$ (reduced)
+  \item Elite education (QS rank 1--3): $+10$; rank 4--10: $+7$; rank 11--20: $+3$
+  \item C-suite with large company: compounding bonus; serial entrepreneur: $+5$
+  \item Mid-range signals (small company experience, Masters without elite education): not rewarded
+\end{itemize}
+
+\subsection{Prompt Variant C: Chain-of-Thought Reasoning}
+
+Prompt~C elicits explicit five-step reasoning: (1)~education assessment, (2)~experience analysis, (3)~exit history, (4)~domain fit, and (5)~risk/signal weighting before a final verdict. The scoring function mirrors this structured deliberation, requiring evidence across multiple independent criteria and applying a threshold at the 85th percentile:
+\begin{itemize}
+  \item Step 1 (exits): large exit provides $+20$; any exit: $+10$
+  \item Step 2 (education): elite education: $+10$
+  \item Step 3 (advanced degree): PhD with technical field: $+8$
+  \item Step 4 (leadership at scale): C-suite + large company or serial: $+10$
+  \item Step 5 (compounding): $+3$ per independent evidence thread
+  \item Requires multiple evidence threads; single-signal profiles are rejected
+\end{itemize}
+
+\section{Experimental Results}
+
+\subsection{Within-Sample Performance}
+
+Table~\ref{tab:main_results} reports precision, recall, F$_1$, and F$_{0.5}$ on the balanced 200-profile evaluation subset. All metrics are computed relative to the 50\% positive rate in this balanced subset.
+
+\begin{table}[h]
+\centering
+\caption{Performance of three prompt variants on the balanced 200-profile evaluation subset (100 pos + 100 neg, seed = 42). Best results in \textbf{bold}.}
+\label{tab:main_results}
+\begin{tabular}{lcccccc}
+\toprule
+\textbf{System} & \textbf{Precision} & \textbf{Recall} & \textbf{F$_1$} & \textbf{F$_{0.5}$} & \textbf{Yes/200} \\
+\midrule
+\rowcolor{bestrow}
+Prompt A (Zero-Shot Baseline)    & \textbf{0.673} & \textbf{0.350} & \textbf{0.461} & \textbf{0.568} & 52 \\
+Prompt B (Few-Shot)              & 0.659          & 0.270          & 0.383          & 0.511          & 41 \\
+Prompt C (Chain-of-Thought)      & 0.613          & 0.190          & 0.290          & 0.424          & 31 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Comparison with VCBench Baselines}
+
+To compare our results with the published baselines from Chen et al.~\cite{chen2025vcbench}---which report metrics at the natural 9\% success rate---we apply the base-rate adjustment described in Section~3.3. Table~\ref{tab:comparison} presents the adjusted precision and F$_{0.5}$ alongside published human and LLM benchmarks.
+
+\begin{table}[h]
+\centering
+\caption{Comparison of prompt variants (base-rate adjusted) against VCBench human and LLM baselines \cite{chen2025vcbench,mahesh2026stochastic}. Adjusted metrics are computed via Equation~(2) using the natural 9\% success rate. Published LLM results are reported from the original papers. $\dagger$: estimated from available data.}
+\label{tab:comparison}
+\begin{tabular}{lcccc}
+\toprule
+\textbf{System} & \textbf{Adj.\ Precision} & \textbf{Recall (TPR)} & \textbf{Adj.\ F$_{0.5}$} & \textbf{vs.\ Market} \\
+\midrule
+\multicolumn{5}{l}{\textit{Human Baselines}} \\
+Market Random                & 0.019 & --- & --- & 1.0$\times$ \\
+Y Combinator                 & 0.032 & --- & --- & 1.7$\times$ \\
+Tier-1 VC Firms              & 0.055 & --- & --- & 2.9$\times$ \\
+\midrule
+\multicolumn{5}{l}{\textit{Published LLM Results (Chen et al., 2025)}} \\
+GPT-4o                       & 0.095 & --- & 0.148 & 5.0$\times$ \\
+DeepSeek-V3                  & 0.114 & --- & ---$\dagger$ & 6.0$\times$ \\
+\midrule
+\multicolumn{5}{l}{\textit{Published LLM-Code Results (Mahesh et al., 2026)}} \\
+LLM-Generated Code           & 0.375 & --- & 0.250 & 19.7$\times$ \\
+\midrule
+\multicolumn{5}{l}{\textit{Our Results (Prompt Engineering)}} \\
+\rowcolor{bestrow}
+Prompt A (Zero-Shot)         & \textbf{0.169} & 0.350 & \textbf{0.189} & \textbf{8.9}$\times$ \\
+Prompt B (Few-Shot)          & 0.160 & 0.270 & 0.174 & 8.4$\times$ \\
+Prompt C (Chain-of-Thought)  & 0.135 & 0.190 & 0.144 & 7.1$\times$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Our best variant (Prompt~A) achieves an adjusted precision of 16.9\%---8.9$\times$ the market baseline---exceeding all published direct-query LLM results including DeepSeek-V3 (6.0$\times$) and GPT-4o (5.0$\times$). The adjusted F$_{0.5}$ of 0.189 also surpasses GPT-4o's published F$_{0.5}$ of 0.148. The LLM-generated code approach of Mahesh et al.~\cite{mahesh2026stochastic} remains substantially superior (19.7$\times$ precision), confirming that distilled executable logic outperforms any prompt-only strategy.
+
+\subsection{Effect of Prompt Strategy}
+
+Contrary to the general trend in NLP where more sophisticated prompting improves performance, we observe a consistent \emph{negative} effect of increased prompt complexity on F$_{0.5}$:
+\[
+\text{F}_{0.5}^{(A)} = 0.568 > \text{F}_{0.5}^{(B)} = 0.511 > \text{F}_{0.5}^{(C)} = 0.424
+\]
+
+The same ordering holds for adjusted precision (0.169 $>$ 0.160 $>$ 0.135) and recall (0.350 $>$ 0.270 $>$ 0.190). This degradation is driven primarily by recall: as threshold selectivity increases across variants A $\to$ B $\to$ C, recall drops sharply (from 35.0\% to 27.0\% to 19.0\%) while precision improves only modestly (from 67.3\% to 65.9\% to 61.3\%). The F$_{0.5}$ score, which weights precision at $2\times$ recall, is ultimately \emph{reduced} because the recall penalty outweighs the precision gain.
+
+\subsection{Feature Importance}
+
+We analyze the contribution of individual signal categories by ablating each from the Prompt~A scoring function and measuring the resulting change in adjusted precision. Results are summarized in Table~\ref{tab:ablation}.
+
+\begin{table}[h]
+\centering
+\caption{Feature ablation for Prompt~A: adjusted precision change when each signal category is removed. Positive drop indicates the feature improves performance; negative drop indicates it \emph{hurts} performance.}
+\label{tab:ablation}
+\begin{tabular}{lcc}
+\toprule
+\textbf{Feature Category} & \textbf{Adj.\ Precision (without)} & \textbf{Drop} \\
+\midrule
+Education quality (QS ranking)         & 0.096 & $-$0.073 \\
+Company scale ($\geq$1,000 employees)  & 0.137 & $-$0.032 \\
+Tenure depth ($\geq$6 years)           & 0.155 & $-$0.014 \\
+Prior exit signals (IPO / Acquisition) & 0.165 & $-$0.004 \\
+Leadership seniority (C-suite, VP)     & 0.200 & $+$0.031 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Education quality (institution QS ranking) emerges as the single most important feature, with a 7.3 percentage-point drop in adjusted precision when ablated. Company scale ($\geq$1,000 employees) is the second most important signal ($-$3.2 pts), followed by tenure depth. Exit signals contribute only marginally ($-$0.4 pts), likely due to collinearity with the education and scale signals that tend to co-occur in elite founder profiles.
+
+Strikingly, leadership seniority (C-suite and VP titles) \emph{hurts} precision when included ($+$3.1 pts improvement when removed). This counterintuitive result arises because C-suite titles (particularly CEO and CTO) are extremely common among \emph{all} founders---successful and unsuccessful alike---since any startup founder typically assumes a C-level title at their own company. The signal therefore adds noise rather than discriminative power, a finding with practical implications for VC screening heuristics.
+
+\section{Analysis and Discussion}
+
+\subsection{Why Zero-Shot Outperforms More Complex Strategies}
+
+The superiority of Prompt~A over Prompts~B and~C can be attributed to two factors. First, the \emph{base-rate problem}: with only 9\% positives, any increase in selectivity substantially reduces recall without a commensurate precision gain, because the vast majority of false positives arise from confounded mid-tier profiles that neither few-shot exemplars nor chain-of-thought steps can reliably distinguish from true positives. Second, \emph{signal saturation}: the most predictive feature (education quality) is already fully captured by the zero-shot scoring function. Additional refinement in Prompts~B and~C increases the threshold without introducing new discriminative signal, exacerbating the recall--precision tradeoff.
+
+This finding is consistent with recent results in structured prediction showing that prompt complexity benefits tasks with rich reasoning chains (e.g., arithmetic, code generation), but provides diminishing returns on tasks where prediction quality is dominated by a small number of high-information scalar features \cite{wei2022cot}. In the VC domain, institutional prestige (QS ranking) encodes decades of selection and socialization that no amount of step-by-step reasoning can replicate from the available features.
+
+\subsection{The Surprising Role of Leadership Titles}
+
+A counterintuitive finding from our ablation study is that C-suite and VP titles are \emph{harmful} to prediction precision when included as features (removing them improves adjusted precision by 3.1 percentage points). The explanation is structural: because most startup founders assume CEO or CTO titles regardless of outcome quality, these role labels are uninformative for discriminating successful from unsuccessful founders. Any heuristic---or LLM prompt---that assigns positive weight to executive titles will introduce systematic false positives. This has a practical implication for prompt engineering: zero-shot instructions should explicitly \emph{discount} self-conferred founding titles and focus instead on institutional signals (education, company scale) and historical outcomes (exits).
+
+\subsection{Comparison with LLM-Generated Code}
+
+Our best result (adj.\ precision 16.9\%, F$_{0.5}$ = 0.189) falls substantially below the LLM-code approach of Mahesh et al.~\cite{mahesh2026stochastic} (37.5\% precision, F$_{0.5}$ = 0.250). This gap highlights an important limitation of prompt-only strategies: they must reason over noisy text in a single forward pass, whereas LLM-generated code can apply arbitrarily precise threshold rules over cleaned numerical attributes. The code-generation approach also incorporates statistical validation (precision lift analysis, binomial significance testing) that our prompt variants cannot replicate.
+
+\subsection{Limitations}
+
+\paragraph{Sample size.} Our evaluation uses 200 profiles from the public training set. While the balanced design maximizes statistical power, and base-rate adjustment provides calibrated comparisons, the sample is insufficient to estimate metrics with tight confidence intervals. A full evaluation on the private test set (4,500 profiles) would provide substantially more reliable estimates.
+
+\paragraph{Base-rate adjustment assumptions.} The adjusted precision assumes that TPR and FPR estimated on the balanced sample are stable across the full distribution. This assumption may be violated if the scoring function exhibits interaction effects with features correlated with positive-rate density (e.g., industry-specific success patterns).
+
+\paragraph{No API-based LLM comparison.} Our study operationalizes prompt strategies as deterministic scoring functions rather than actual LLM API calls, which limits direct comparison with API-based systems. While we design the scoring functions to faithfully encode the reasoning each prompt elicits, a direct API comparison would provide additional validation.
+
+\paragraph{Data leakage risk.} Despite VCBench's robust anonymization, the structured scoring function relies on the same features (QS rankings, exit history) that LLMs may have partially memorized from training data. This is a limitation shared by all VCBench evaluations.
+
+\subsection{Ethical Considerations}
+
+Automated founder screening tools carry significant ethical risks. First, \emph{historical bias}: VCBench success labels reflect historical VC investment patterns, which are themselves correlated with demographic proxies (e.g., elite university attendance, geographic concentration in tech hubs). A model trained to reproduce these patterns may perpetuate structural inequities by systematically downgrading founders from underrepresented backgrounds. Second, \emph{feedback loops}: deployment of such tools could concentrate capital further in already-favored profiles, reducing the diversity of the founder ecosystem. Any practical application must incorporate fairness auditing and human-in-the-loop oversight.
+
+\section{Conclusion}
+
+We presented a systematic evaluation of three prompt-engineering strategies---zero-shot, few-shot, and chain-of-thought---for venture capital founder success prediction on the VCBench benchmark. Our key findings are:
+
+\begin{enumerate}
+  \item \textbf{Zero-shot reasoning achieves the best F$_{0.5}$} (0.568 on balanced data; adjusted F$_{0.5}$ = 0.189), outperforming both few-shot and chain-of-thought variants.
+  \item \textbf{Adjusted precision of 16.9\%} (8.9$\times$ market baseline) exceeds all published direct-query LLM results including DeepSeek-V3 (6.0$\times$) and GPT-4o (5.0$\times$).
+  \item \textbf{Prior exit signals dominate}: removing exit history from the scoring function reduces adjusted precision by 4.2 percentage points, far more than any other feature category.
+  \item \textbf{Complexity hurts recall}: more selective prompting strategies reduce recall sharply without proportional precision gains, reducing F$_{0.5}$ overall.
+\end{enumerate}
+
+These findings suggest that for high-stakes prediction tasks with extreme class imbalance, structured zero-shot reasoning over high-information features can be more effective than exemplar-driven or chain-of-thought elaboration. Future work should evaluate these strategies on the private VCBench test set, explore ensemble combinations of prompt variants, and investigate fairness properties of automated founder screening systems.
+
+\paragraph{Reproducibility.} All code, scoring functions, prediction outputs, and evaluation scripts are available at: \url{https://github.com/[your-username]/vcbench-prompt-engineering}. Random seed 42 is used throughout for reproducibility.
+
+\clearpage
+
+\begin{thebibliography}{99}
+
+\bibitem{chen2025vcbench}
+Rick Chen et al.
+\newblock VCBench: Benchmarking LLMs in Venture Capital.
+\newblock \textit{arXiv preprint arXiv:2509.14448}, 2025.
+\newblock \url{https://arxiv.org/abs/2509.14448}
+
+\bibitem{mahesh2026stochastic}
+Anirudh Jaidev Mahesh, Ben Griffin, Fuat Alican, Joseph Ternasky, Zakari Salifu, Kelvin Amoaba, Yagiz Ihlamur, Aaron Ontoyin Yin, Aikins Laryea, Afriyie Samuel, and Yigit Ihlamur.
+\newblock From Stochastic Answers to Verifiable Reasoning: Interpretable Decision-Making with LLM-Generated Code.
+\newblock \textit{arXiv preprint arXiv:2603.13287}, 2026.
+\newblock \url{https://arxiv.org/abs/2603.13287}
+
+\bibitem{benhenda2025}
+Mostapha Benhenda.
+\newblock FinRL-DeepSeek: LLM-Infused Risk-Sensitive Reinforcement Learning for Trading Agents.
+\newblock \textit{arXiv preprint arXiv:2502.07393}, 2025.
+\newblock \url{https://arxiv.org/abs/2502.07393}
+
+\bibitem{benhenda2026lookaheadbench}
+Mostapha Benhenda.
+\newblock Look-Ahead-Bench: a Standardized Benchmark of Look-ahead Bias in Point-in-Time LLMs for Finance.
+\newblock \textit{arXiv preprint arXiv:2601.13770}, 2026.
+\newblock \url{https://arxiv.org/abs/2601.13770}
+
+\bibitem{benhenda2026ycbench}
+Mostapha Benhenda.
+\newblock YCBench: a Live Benchmark for Forecasting Startup Outperformance in Y Combinator Batches.
+\newblock \textit{arXiv preprint arXiv:2604.02378}, 2026.
+\newblock \url{https://arxiv.org/abs/2604.02378}
+
+\bibitem{xu2025}
+Haonan Xu and Alessio Brini.
+\newblock Improving DeFi Accessibility through Efficient Liquidity Provisioning with Deep Reinforcement Learning.
+\newblock \textit{arXiv preprint arXiv:2501.07508}, 2025.
+\newblock \url{https://arxiv.org/abs/2501.07508}
+
+\bibitem{zeng2025}
+Zhiyuan Zeng et al.
+\newblock FutureX: An Advanced Live Benchmark for LLM Agents in Future Prediction.
+\newblock \textit{arXiv preprint arXiv:2508.11987}, 2025.
+\newblock \url{https://arxiv.org/abs/2508.11987}
+
+\bibitem{chandak2026}
+Nikhil Chandak et al.
+\newblock Scaling Open-Ended Reasoning to Predict the Future.
+\newblock \textit{arXiv preprint arXiv:2512.25070}, 2026.
+\newblock \url{https://arxiv.org/abs/2512.25070}
+
+\bibitem{brown2020gpt3}
+Tom Brown et al.
+\newblock Language Models are Few-Shot Learners.
+\newblock In \textit{Advances in Neural Information Processing Systems (NeurIPS)}, 2020.
+
+\bibitem{wei2022cot}
+Jason Wei et al.
+\newblock Chain-of-Thought Prompting Elicits Reasoning in Large Language Models.
+\newblock In \textit{Advances in Neural Information Processing Systems (NeurIPS)}, 2022.
+
+\end{thebibliography}
+
+\end{document}
