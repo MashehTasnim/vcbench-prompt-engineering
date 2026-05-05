@@ -26,10 +26,10 @@
 Prediction: A Systematic Evaluation on VCBench}
 
 \author{
-  Tasnim Achraf\\
+  Tasnim Masheh\\
   Aivancity School for Technology, Business \& Society\\
   Paris-Cachan, France\\
-  \texttt{tasnim.achraf@edu.aivancity.ai}
+  \texttt{tasnim.masheh@aivancity.education}
 }
 
 \begin{document}
